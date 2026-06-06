@@ -9,11 +9,6 @@ import (
 // monthly (matches the "Netflix" framing — design §8).
 type EpochID = string
 
-// currentEpochID returns the "YYYY-MM" UTC epoch containing now.
-func currentEpochID(now time.Time) EpochID {
-	return now.UTC().Format("2006-01")
-}
-
 // previousEpochID returns the "YYYY-MM" UTC epoch immediately before the one
 // containing now. The hourly settlement loop targets the previous epoch so it
 // only ever settles a closed month.
