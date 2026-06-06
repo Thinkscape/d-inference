@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { TopBar } from "@/components/TopBar";
+import { BaseRewardsPanel } from "@/components/earn/BaseRewardsPanel";
 import { useAuth } from "@/hooks/useAuth";
 import { trackEvent } from "@/lib/google-analytics";
 import { fetchModels, fetchPricing, type Model, type PricingResponse } from "@/lib/api";
@@ -516,6 +517,9 @@ export default function EarnPage() {
               on the Darkbloom network.
             </p>
           </div>
+
+          {/* Base-rewards earnings floor */}
+          <BaseRewardsPanel />
 
           {/* Setup Provider CTA */}
           <div className="rounded-xl bg-bg-secondary p-6 mb-6">

@@ -39,6 +39,7 @@ import (
 	"github.com/eigeninference/d-inference/coordinator/internal/e2e"
 	"github.com/eigeninference/d-inference/coordinator/mdm"
 	"github.com/eigeninference/d-inference/coordinator/payments"
+	"github.com/eigeninference/d-inference/coordinator/payments/baserewards"
 	"github.com/eigeninference/d-inference/coordinator/ratelimit"
 	"github.com/eigeninference/d-inference/coordinator/registry"
 	"github.com/eigeninference/d-inference/coordinator/saferun"
@@ -290,6 +291,22 @@ func main() {
 	billingSvc := billing.NewService(st, ledger, logger, billingCfg)
 	srv.SetBilling(billingSvc)
 
+	// Provider base rewards (off unless EIGENINFERENCE_BASE_REWARDS=true).
+	if brc := cfg.ServerConfig.BaseRewards; brc.Enabled {
+		brCfg := baserewards.DefaultConfig()
+		brCfg.Enabled = true
+		brCfg.ReductionK = brc.ReductionK
+		brCfg.PoolBudgetMicroUSD = brc.FloorPoolB
+		brCfg.MinUptimeFrac = brc.MinUptimeFrac
+		srv.SetBaseRewards(baserewards.NewEngine(st, reg, brCfg, logger))
+		logger.Info("base rewards enabled",
+			"reduction_k", brCfg.ReductionK,
+			"pool_micro_usd", brCfg.PoolBudgetMicroUSD,
+			"min_uptime", brCfg.MinUptimeFrac)
+	} else {
+		logger.Info("base rewards disabled (set EIGENINFERENCE_BASE_REWARDS=true to enable)")
+	}
+
 	// Derive the coordinator's long-lived X25519 key.
 	if coordKey, err := e2e.DeriveCoordinatorKey(billingCfg.EncryptionMnemonic); err == nil {
 		srv.SetCoordinatorKey(coordKey)
@@ -455,6 +472,13 @@ func main() {
 
 	// Push gauge values to DogStatsD periodically.
 	go srv.StartDDGaugeLoop(ctx)
+
+	// Base-rewards settlement + correctness prober (only when enabled).
+	if br := srv.BaseRewards(); br != nil {
+		saferun.Go(logger, "base_rewards_settlement", func() { br.Run(ctx) })
+		prober := api.NewProber(srv)
+		saferun.Go(logger, "base_rewards_prober", func() { prober.Run(ctx) })
+	}
 
 	// HTTP server with graceful shutdown.
 	httpServer := &http.Server{

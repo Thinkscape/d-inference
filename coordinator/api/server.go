@@ -40,6 +40,7 @@ import (
 	"github.com/eigeninference/d-inference/coordinator/internal/e2e"
 	"github.com/eigeninference/d-inference/coordinator/mdm"
 	"github.com/eigeninference/d-inference/coordinator/payments"
+	"github.com/eigeninference/d-inference/coordinator/payments/baserewards"
 	"github.com/eigeninference/d-inference/coordinator/protocol"
 	"github.com/eigeninference/d-inference/coordinator/ratelimit"
 	"github.com/eigeninference/d-inference/coordinator/registry"
@@ -160,6 +161,7 @@ type Server struct {
 	store                  store.Store
 	ledger                 *payments.Ledger
 	billing                *billing.Service
+	baseRewards            *baserewards.Engine
 	logger                 *slog.Logger
 	mux                    *http.ServeMux
 	challengeInterval      time.Duration     // 0 means use DefaultChallengeInterval
@@ -674,6 +676,17 @@ func (s *Server) SetBilling(svc *billing.Service) {
 
 func (s *Server) Billing() *billing.Service {
 	return s.billing
+}
+
+// SetBaseRewards configures the provider base-rewards engine (off unless the
+// EIGENINFERENCE_BASE_REWARDS flag is set; nil = disabled).
+func (s *Server) SetBaseRewards(e *baserewards.Engine) {
+	s.baseRewards = e
+}
+
+// BaseRewards returns the base-rewards engine, or nil when disabled.
+func (s *Server) BaseRewards() *baserewards.Engine {
+	return s.baseRewards
 }
 
 func (s *Server) SetChallengeInterval(d time.Duration) {
@@ -1468,6 +1481,7 @@ func (s *Server) routes() {
 
 	// Metrics snapshot (admin only)
 	s.mux.HandleFunc("GET /v1/admin/metrics", s.handleAdminMetrics)
+	s.mux.HandleFunc("GET /v1/admin/base-rewards", s.handleAdminBaseRewards)
 
 	// Catch-all for unimplemented OpenAI-compatible endpoints.
 	// Registered last (old-style pattern) so explicit method+path routes

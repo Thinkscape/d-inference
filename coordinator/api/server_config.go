@@ -21,6 +21,18 @@ type ServerConfig struct {
 	AdminKey             string
 	AdminEmails          []string
 	ReleaseKey           string
+	BaseRewards          BaseRewardsConfig
+}
+
+// BaseRewardsConfig holds the deployment knobs for the provider base-rewards
+// engine. Policy constants (the floor table, taper targets) live in
+// payments/baserewards; only operational toggles are env-driven here. The
+// feature is OFF unless Enabled is true, so the default config is a no-op.
+type BaseRewardsConfig struct {
+	Enabled       bool    // EIGENINFERENCE_BASE_REWARDS
+	ReductionK    float64 // EIGENINFERENCE_BASE_REWARDS_K (1.0 = pure floor)
+	FloorPoolB    int64   // EIGENINFERENCE_BASE_REWARDS_POOL_MICRO (µUSD/mo cap)
+	MinUptimeFrac float64 // EIGENINFERENCE_BASE_REWARDS_MIN_UPTIME
 }
 
 // ReadServerConfig reads server configuration from environment variables.
@@ -36,6 +48,12 @@ func ReadServerConfig() ServerConfig {
 		AdminKey:             os.Getenv(env.EnvPrefix + "_ADMIN_KEY"),
 		AdminEmails:          ParseCommaList(env.EnvOr(env.EnvPrefix+"_ADMIN_EMAILS", "")),
 		ReleaseKey:           os.Getenv(env.EnvPrefix + "_RELEASE_KEY"),
+		BaseRewards: BaseRewardsConfig{
+			Enabled:       env.EnvBool(env.EnvPrefix+"_BASE_REWARDS", false),
+			ReductionK:    env.EnvFloat(env.EnvPrefix+"_BASE_REWARDS_K", 1.0),
+			FloorPoolB:    int64(env.EnvInt(env.EnvPrefix+"_BASE_REWARDS_POOL_MICRO", 9_000_000_000)),
+			MinUptimeFrac: env.EnvFloat(env.EnvPrefix+"_BASE_REWARDS_MIN_UPTIME", 0.90),
+		},
 	}
 }
 

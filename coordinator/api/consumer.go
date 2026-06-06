@@ -2581,132 +2581,80 @@ func (s *Server) handleNonStreamingResponseWithFirstChunk(w http.ResponseWriter,
 	ctx, cancel := context.WithTimeout(r.Context(), inferenceTimeout)
 	defer cancel()
 
-	var chunks []string
-	if firstChunk != "" {
-		chunks = append(chunks, firstChunk)
+	// Drain the provider's channels to a finished inference. The shared helper
+	// performs no billing and writes no response — refund + presentation stay
+	// here so the prober (which has no reservation) can reuse the same drain.
+	res, cerr := s.drainCompletion(ctx, pr, firstChunk)
+	if cerr != nil {
+		s.refundReservedBalance(pr, cerr.RefSuffix)
+		switch cerr.Kind {
+		case completionTimeout:
+			writeJSON(w, cerr.StatusCode, errorResponse("timeout", cerr.Message))
+		default:
+			writeJSON(w, cerr.StatusCode, errorResponse("provider_error", cerr.Message))
+		}
+		return
 	}
 
-	for {
-		select {
-		case chunk, ok := <-pr.ChunkCh:
-			if !ok {
-				select {
-				case errMsg, ok := <-pr.ErrorCh:
-					if ok && errMsg.Error != "" {
-						s.refundReservedBalance(pr, "provider_error:"+pr.RequestID)
-						statusCode := errMsg.StatusCode
-						if statusCode == 0 {
-							statusCode = http.StatusBadGateway
-						}
-						writeJSON(w, statusCode, errorResponse("provider_error", errMsg.Error))
-						return
-					}
-				default:
-				}
-				// The provider forwards the raw backend response as a single
-				// chunk. Detect complete responses (object=chat.completion
-				// or object=response) and pass through directly — this is
-				// format-agnostic and works for chat completions, Responses
-				// API, or any future endpoint without parsing.
-				if len(chunks) == 1 {
-					raw := strings.TrimPrefix(chunks[0], "data: ")
-					var obj map[string]any
-					if err := json.Unmarshal([]byte(raw), &obj); err == nil {
-						objType, _ := obj["object"].(string)
-						// Complete responses have object=chat.completion or
-						// object=response. Delta chunks have object=chat.completion.chunk.
-						if objType == "chat.completion" || objType == "response" {
-							var completeUsage protocol.UsageInfo
-							select {
-							case u, ok := <-pr.CompleteCh:
-								if !ok {
-									s.refundReservedBalance(pr, "provider_incomplete:"+pr.RequestID)
-									writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "provider ended without completion"))
-									return
-								}
-								completeUsage = u
-							case <-ctx.Done():
-								s.refundReservedBalance(pr, "provider_timeout:"+pr.RequestID)
-								writeJSON(w, http.StatusGatewayTimeout, errorResponse("timeout", "timed out waiting for usage info"))
-								return
-							}
-							if objType == "chat.completion" {
-								normalizeCompleteChatResponse(obj, pr.Model)
-								// Keep the passthrough path consistent with the
-								// SSE-reconstruction path: surface the provider's
-								// accurate reasoning-token count if its raw usage
-								// object didn't already carry one.
-								injectReasoningDetailIntoRawUsage(obj, completeUsage)
-								if pr.IsResponsesAPI {
-									var chatResp types.ChatCompletionResponse
-									b, err := json.Marshal(obj)
-									if err != nil {
-										log.Printf("WARN: failed to marshal chat response for Responses API conversion: %v", err)
-										writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "invalid provider response"))
-										return
-									}
-									if err := json.Unmarshal(b, &chatResp); err != nil {
-										log.Printf("WARN: failed to unmarshal chat response into typed struct: %v", err)
-										writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "invalid provider response"))
-										return
-									}
-									respObj := chatCompletionToResponses(chatResp, pr.Model, pr.SESignature, pr.ResponseHash)
-									writeJSON(w, http.StatusOK, respObj)
-									return
-								}
-							}
-							if pr.SESignature != "" {
-								obj["se_signature"] = pr.SESignature
-								obj["response_hash"] = pr.ResponseHash
-							}
-							writeJSON(w, http.StatusOK, obj)
+	chunks := res.Chunks
+	usage := res.Usage
+
+	// The provider forwards the raw backend response as a single chunk. Detect
+	// complete responses (object=chat.completion or object=response) and pass
+	// through directly — this is format-agnostic and works for chat
+	// completions, Responses API, or any future endpoint without parsing.
+	if len(chunks) == 1 {
+		raw := strings.TrimPrefix(chunks[0], "data: ")
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(raw), &obj); err == nil {
+			objType, _ := obj["object"].(string)
+			// Complete responses have object=chat.completion or
+			// object=response. Delta chunks have object=chat.completion.chunk.
+			if objType == "chat.completion" || objType == "response" {
+				if objType == "chat.completion" {
+					normalizeCompleteChatResponse(obj, pr.Model)
+					// Keep the passthrough path consistent with the
+					// SSE-reconstruction path: surface the provider's
+					// accurate reasoning-token count if its raw usage
+					// object didn't already carry one.
+					injectReasoningDetailIntoRawUsage(obj, usage)
+					if pr.IsResponsesAPI {
+						var chatResp types.ChatCompletionResponse
+						b, err := json.Marshal(obj)
+						if err != nil {
+							log.Printf("WARN: failed to marshal chat response for Responses API conversion: %v", err)
+							writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "invalid provider response"))
 							return
 						}
-					}
-				}
-
-				// Fallback: SSE delta chunks — reconstruct into response.
-				msg := extractMessage(chunks)
-				select {
-				case usage, ok := <-pr.CompleteCh:
-					if !ok {
-						s.refundReservedBalance(pr, "provider_incomplete:"+pr.RequestID)
-						writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "provider ended without completion"))
+						if err := json.Unmarshal(b, &chatResp); err != nil {
+							log.Printf("WARN: failed to unmarshal chat response into typed struct: %v", err)
+							writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "invalid provider response"))
+							return
+						}
+						respObj := chatCompletionToResponses(chatResp, pr.Model, res.SESignature, res.ResponseHash)
+						writeJSON(w, http.StatusOK, respObj)
 						return
 					}
-					var resp any
-					if pr.IsResponsesAPI {
-						resp = buildResponsesResponse(pr.RequestID, pr.Model, msg, usage, pr.SESignature, pr.ResponseHash)
-					} else {
-						resp = buildNonStreamingResponse(pr.RequestID, pr.Model, msg, usage, pr.SESignature, pr.ResponseHash)
-					}
-					writeJSON(w, http.StatusOK, resp)
-				case <-ctx.Done():
-					s.refundReservedBalance(pr, "provider_timeout:"+pr.RequestID)
-					writeJSON(w, http.StatusGatewayTimeout, errorResponse("timeout", "timed out waiting for usage info"))
 				}
+				if res.SESignature != "" {
+					obj["se_signature"] = res.SESignature
+					obj["response_hash"] = res.ResponseHash
+				}
+				writeJSON(w, http.StatusOK, obj)
 				return
 			}
-			chunks = append(chunks, chunk)
-
-		case errMsg, ok := <-pr.ErrorCh:
-			if !ok {
-				continue
-			}
-			s.refundReservedBalance(pr, "provider_error:"+pr.RequestID)
-			statusCode := errMsg.StatusCode
-			if statusCode == 0 {
-				statusCode = http.StatusBadGateway
-			}
-			writeJSON(w, statusCode, errorResponse("provider_error", errMsg.Error))
-			return
-
-		case <-ctx.Done():
-			s.refundReservedBalance(pr, "provider_timeout:"+pr.RequestID)
-			writeJSON(w, http.StatusGatewayTimeout, errorResponse("timeout", "request timed out"))
-			return
 		}
 	}
+
+	// Fallback: SSE delta chunks — reconstruct into response.
+	msg := extractMessage(chunks)
+	var resp any
+	if pr.IsResponsesAPI {
+		resp = buildResponsesResponse(pr.RequestID, pr.Model, msg, usage, res.SESignature, res.ResponseHash)
+	} else {
+		resp = buildNonStreamingResponse(pr.RequestID, pr.Model, msg, usage, res.SESignature, res.ResponseHash)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func normalizeCompleteChatResponse(obj map[string]any, requestedModel string) {
