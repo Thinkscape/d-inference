@@ -146,9 +146,11 @@ func (e *Engine) SettleEpoch(ctx context.Context, epochID EpochID) (SettleResult
 			return err
 		}
 		settledKeys := make(map[string]bool, len(settled))
+		priorByAccount := make(map[string]int64)
 		var settledSum int64
 		for _, d := range settled {
 			settledKeys[d.ProviderKey] = true
+			priorByAccount[d.AccountID] += d.AmountMicroUSD
 			settledSum += d.AmountMicroUSD
 		}
 
@@ -168,7 +170,7 @@ func (e *Engine) SettleEpoch(ctx context.Context, epochID EpochID) (SettleResult
 		if remainingBudget < 0 {
 			remainingBudget = 0
 		}
-		allocs := AllocateDraws(pureCands, remainingBudget, e.cfg.WorkhorseReserveFrac, e.cfg.PerAccountCapFrac)
+		allocs := AllocateDraws(pureCands, remainingBudget, e.cfg.PoolBudgetMicroUSD, e.cfg.WorkhorseReserveFrac, e.cfg.PerAccountCapFrac, priorByAccount)
 
 		// Index audit context by provider key so we can carry
 		// floor/earned/uptime/mem into the settlement row.

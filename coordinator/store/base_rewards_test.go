@@ -492,6 +492,70 @@ func TestRecordProbeResult_HasProbeSuccessSince(t *testing.T) {
 	}
 }
 
+// TestSettleProviderFloorDraw_RecordsVisibleEarning is the regression for the
+// "invisible payout" finding: a settled floor draw must show in the provider's
+// earnings history + summary (as a base_reward row) so it isn't an unexplained
+// balance jump — while staying EXCLUDED from organic gating (work-gate + draw
+// math) so it can never count as real served revenue.
+func TestSettleProviderFloorDraw_RecordsVisibleEarning(t *testing.T) {
+	ctx := context.Background()
+	for name, s := range storeBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			pk := uniqueID("pk")
+			acct := uniqueID("acct")
+			epoch := "2026-07"
+			if _, err := s.SettleProviderFloorDraw(ctx, &ProviderFloorDraw{
+				ProviderKey: pk, AccountID: acct, EpochID: epoch,
+				AmountMicroUSD: 18_000_000, FloorMicroUSD: 18_000_000, UptimeFrac: 1.0, MemoryGB: 64,
+			}); err != nil {
+				t.Fatalf("settle: %v", err)
+			}
+
+			// Visible in earnings history as a base_reward row.
+			earnings, err := s.GetAccountEarnings(acct, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found bool
+			for i := range earnings {
+				if earnings[i].Model == "base_reward" && earnings[i].AmountMicroUSD == 18_000_000 {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("floor draw not visible in account earnings: %+v", earnings)
+			}
+
+			// Counted in the displayed summary.
+			sum, err := s.GetAccountEarningsSummary(acct)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sum.TotalMicroUSD != 18_000_000 || sum.Count != 1 {
+				t.Fatalf("summary = %+v, want total 18000000 count 1", sum)
+			}
+
+			// EXCLUDED from organic gating: must not count toward earned or the work-gate.
+			lo := time.Now().Add(-24 * time.Hour)
+			hi := time.Now().Add(24 * time.Hour)
+			organic, err := s.SumProviderEarningsByKey(ctx, pk, lo, hi)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if organic != 0 {
+				t.Fatalf("organic earnings = %d, want 0 (base_reward must be excluded)", organic)
+			}
+			billed, err := s.HasBilledJobSince(ctx, pk, lo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if billed {
+				t.Fatalf("HasBilledJobSince = true on a base_reward row, want false")
+			}
+		})
+	}
+}
+
 // --- test helpers ---
 
 var idSeq int64

@@ -69,14 +69,22 @@ func valuePerFloorDollar(c Candidate) float64 {
 //     value-per-floor-dollar.
 //  2. The remaining budget (reserve leftovers + the rest) water-fills every
 //     still-unfunded candidate by the same ranking.
-//  3. An optional per-account cap (perAccountCapFrac of budget; 0 disables)
-//     bounds each AccountID's total grant.
+//  3. An optional per-account cap (perAccountCapFrac of capBudget; 0 disables)
+//     bounds each AccountID's total grant. The cap is keyed on the FULL pool
+//     (capBudget), and priorByAccount seeds each account's already-settled total
+//     for this epoch, so the cap holds ACROSS idempotent re-settlement runs (a
+//     new machine from an account near its cap cannot win a fresh full cap).
+//
+// `budget` is what may be granted this run (the pool minus amounts already
+// settled this epoch); `capBudget` is the full monthly pool used only as the
+// per-account cap basis. Pass capBudget == budget and priorByAccount == nil for
+// a single-shot allocation.
 //
 // Deterministic for any input: candidates are stable-sorted with ProviderKey as
 // the final tiebreaker, so map iteration order in the caller never changes the
 // result. Returns one Allocation per input candidate (Granted may be 0 —
 // waitlisted).
-func AllocateDraws(cands []Candidate, budget int64, workhorseReserveFrac, perAccountCapFrac float64) []Allocation {
+func AllocateDraws(cands []Candidate, budget, capBudget int64, workhorseReserveFrac, perAccountCapFrac float64, priorByAccount map[string]int64) []Allocation {
 	out := make([]Allocation, len(cands))
 	idx := make(map[string]int, len(cands)) // providerKey -> out index
 	order := make([]int, len(cands))
@@ -102,9 +110,15 @@ func AllocateDraws(cands []Candidate, budget int64, workhorseReserveFrac, perAcc
 
 	var perAccountCap int64
 	if perAccountCapFrac > 0 {
-		perAccountCap = int64(float64(budget) * perAccountCapFrac)
+		perAccountCap = int64(float64(capBudget) * perAccountCapFrac)
 	}
-	accountGranted := make(map[string]int64)
+	// Seed each account's running total with what it was already granted this
+	// epoch so the cap is cumulative across re-settlement runs. These prior
+	// amounts are NOT part of remaining (they were spent on earlier runs).
+	accountGranted := make(map[string]int64, len(priorByAccount))
+	for acct, amt := range priorByAccount {
+		accountGranted[acct] = amt
+	}
 
 	remaining := budget
 	// grant tops up one candidate, honoring the remaining budget and per-account

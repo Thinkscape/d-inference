@@ -26,7 +26,7 @@ func TestAllocateDraws_UnderBudget(t *testing.T) {
 		{ProviderKey: "a", AccountID: "acc-a", MemGB: 64, Floor: 18_000_000, Draw: 18_000_000},
 		{ProviderKey: "b", AccountID: "acc-b", MemGB: 96, Floor: 22_000_000, Draw: 22_000_000},
 	}
-	allocs := AllocateDraws(cands, FloorPoolBudgetMicroUSD, 0.5, 0.05)
+	allocs := AllocateDraws(cands, FloorPoolBudgetMicroUSD, FloorPoolBudgetMicroUSD, 0.5, 0.05, nil)
 	g := grantedByKey(allocs)
 	if g["a"] != 18_000_000 || g["b"] != 22_000_000 {
 		t.Fatalf("under-budget: every desired draw should be granted in full, got %+v", g)
@@ -45,7 +45,7 @@ func TestAllocateDraws_WorkhorseProtected(t *testing.T) {
 		{ProviderKey: "big", AccountID: "acc-big", MemGB: 512, Floor: 40_000_000, Draw: 40_000_000},
 		{ProviderKey: "work", AccountID: "acc-work", MemGB: 64, Floor: 18_000_000, Draw: 18_000_000},
 	}
-	allocs := AllocateDraws(cands, budget, 0.5, 0) // 50% reserved for workhorse, no per-account cap
+	allocs := AllocateDraws(cands, budget, budget, 0.5, 0, nil) // 50% reserved for workhorse, no per-account cap
 	g := grantedByKey(allocs)
 
 	if g["work"] == 0 {
@@ -70,7 +70,7 @@ func TestAllocateDraws_PerAccountCap(t *testing.T) {
 		{ProviderKey: "a2", AccountID: "whale", MemGB: 64, Floor: 18_000_000, Draw: 18_000_000},
 		{ProviderKey: "a3", AccountID: "whale", MemGB: 64, Floor: 18_000_000, Draw: 18_000_000},
 	}
-	allocs := AllocateDraws(cands, budget, 0.5, 0.05)
+	allocs := AllocateDraws(cands, budget, budget, 0.5, 0.05, nil)
 	var accTotal int64
 	for _, a := range allocs {
 		if a.AccountID == "whale" {
@@ -85,6 +85,24 @@ func TestAllocateDraws_PerAccountCap(t *testing.T) {
 	}
 }
 
+// TestAllocateDraws_PerAccountCapAcrossRuns is the regression for the cap leak
+// across re-settlement runs: an account that already drew this epoch must have
+// that prior amount counted against its 5% cap, so a newly-eligible machine on
+// the same account can only draw the remaining headroom.
+func TestAllocateDraws_PerAccountCapAcrossRuns(t *testing.T) {
+	const pool = int64(100_000_000) // 5% cap = 5_000_000
+	// "whale" already settled 4M in an earlier run of this epoch.
+	prior := map[string]int64{"whale": 4_000_000}
+	cands := []Candidate{
+		{ProviderKey: "a2", AccountID: "whale", MemGB: 64, Floor: 18_000_000, Draw: 18_000_000},
+	}
+	// budget (remaining this run) is the full pool minus the 4M already spent.
+	allocs := AllocateDraws(cands, pool-4_000_000, pool, 0.5, 0.05, prior)
+	if got := allocs[0].Granted; got != 1_000_000 {
+		t.Fatalf("granted %d, want 1000000 (5%% cap 5M minus 4M prior)", got)
+	}
+}
+
 func TestAllocateDraws_Deterministic(t *testing.T) {
 	cands := []Candidate{
 		{ProviderKey: "c", AccountID: "acc-c", MemGB: 512, Floor: 40_000_000, Draw: 40_000_000},
@@ -93,11 +111,11 @@ func TestAllocateDraws_Deterministic(t *testing.T) {
 		{ProviderKey: "d", AccountID: "acc-d", MemGB: 64, Floor: 18_000_000, Draw: 18_000_000},
 	}
 	budget := int64(25_000_000) // binds — forces ranking decisions
-	first := AllocateDraws(cands, budget, 0.5, 0.05)
+	first := AllocateDraws(cands, budget, budget, 0.5, 0.05, nil)
 
 	// Re-run with a shuffled input order; result-by-key must be identical.
 	shuffled := []Candidate{cands[2], cands[0], cands[3], cands[1]}
-	second := AllocateDraws(shuffled, budget, 0.5, 0.05)
+	second := AllocateDraws(shuffled, budget, budget, 0.5, 0.05, nil)
 
 	if !reflect.DeepEqual(grantedByKey(first), grantedByKey(second)) {
 		t.Fatalf("allocation not deterministic across input order:\n first=%+v\n second=%+v",

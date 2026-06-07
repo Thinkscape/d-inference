@@ -121,16 +121,20 @@ func (p *Prober) probeProvider(ctx context.Context, snap registry.ProviderSnapsh
 		RequestID:              requestID,
 		Model:                  model,
 		ConsumerKey:            "base-rewards-probe",
-		AllowedProviderSerials: []string{snap.SerialNumber},
-		SelfRouteOnly:          true, // pin + never fall back to a paid provider
-		FreeSelfRoute:          true, // settles free — no earning row, no payout
-		EstimatedPromptTokens:  8,
-		RequestedMaxTokens:     probeMaxTokens,
-		AcceptedCh:             make(chan struct{}, 1),
-		ChunkCh:                make(chan string, chunkBufferSize),
-		CompleteCh:             make(chan protocol.UsageInfo, 1),
-		ErrorCh:                make(chan protocol.InferenceErrorMessage, 1),
-		Timing:                 &registry.RequestTiming{ReceivedAt: time.Now()},
+		AllowedProviderSerials: []string{snap.SerialNumber}, // pin to this machine
+		// FreeSelfRoute makes the dispatch settle free (no earning row, no payout).
+		// We deliberately do NOT set SelfRouteOnly: that flag means "owned-only"
+		// and, with no OwnerAccountID, ReserveProviderEx would filter out every
+		// provider (providerOwnedBy == false), so the probe could never reserve
+		// the pinned machine. The serial allowlist alone does the pinning.
+		FreeSelfRoute:         true,
+		EstimatedPromptTokens: 8,
+		RequestedMaxTokens:    probeMaxTokens,
+		AcceptedCh:            make(chan struct{}, 1),
+		ChunkCh:               make(chan string, chunkBufferSize),
+		CompleteCh:            make(chan protocol.UsageInfo, 1),
+		ErrorCh:               make(chan protocol.InferenceErrorMessage, 1),
+		Timing:                &registry.RequestTiming{ReceivedAt: time.Now()},
 	}
 
 	provider, _ := s.registry.ReserveProviderEx(model, pr)
@@ -187,6 +191,13 @@ func (p *Prober) probeProvider(ctx context.Context, snap registry.ProviderSnapsh
 	started := time.Now()
 	text, _, seSig, respHash, awaitErr := s.awaitCompletion(dctx, pr)
 	latencyMs := time.Since(started).Milliseconds()
+
+	// On timeout/error the provider may still be generating the probe completion.
+	// Send a cancel so it stops and frees capacity (the deferred RemovePending +
+	// SetProviderIdle alone would let an abandoned probe overlap real work).
+	if awaitErr != nil {
+		s.sendProviderCancel(provider, requestID)
+	}
 
 	// Success = a valid, SE-signed, non-empty completion arrived in time.
 	// (Byte-exact known-answer matching is a documented follow-up.)

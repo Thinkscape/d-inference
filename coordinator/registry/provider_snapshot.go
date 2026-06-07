@@ -36,6 +36,7 @@ func (r *Registry) ListProviders() []ProviderSnapshot {
 			serial = p.AttestationResult.SerialNumber
 			hardwareModel = p.AttestationResult.HardwareModel
 		}
+		warm := warmServingModel(p)
 		out = append(out, ProviderSnapshot{
 			ID:             p.ID,
 			ProviderKey:    p.PublicKey,
@@ -45,8 +46,8 @@ func (r *Registry) ListProviders() []ProviderSnapshot {
 			TrustLevel:     p.TrustLevel,
 			Attested:       p.Attested,
 			Online:         p.Status == StatusOnline,
-			ModelLoaded:    p.CurrentModel != "" || len(p.WarmModels) > 0,
-			CurrentModel:   probeModel(p),
+			ModelLoaded:    warm != "",
+			CurrentModel:   warm,
 			MemoryPressure: p.SystemMetrics.MemoryPressure,
 			ThermalState:   p.SystemMetrics.ThermalState,
 		})
@@ -55,10 +56,22 @@ func (r *Registry) ListProviders() []ProviderSnapshot {
 	return out
 }
 
-// probeModel returns the model a base-rewards probe should target: the actively
-// served model, else the first warm model, else "" (nothing to probe). Caller
-// must hold p.mu.
-func probeModel(p *Provider) string {
+// warmServingModel returns the model a base-rewards probe should target and that
+// counts as "loaded for routing" — using the authoritative backend slot state
+// when present (a slot is warm only in "running"/"idle", matching the scheduler
+// at registry.go's warm check), so a crashed/reloading/idle_shutdown slot with
+// stale legacy fields is NOT treated as serving. Falls back to the reported
+// CurrentModel/WarmModels only for legacy providers that send no BackendCapacity.
+// Caller must hold p.mu.
+func warmServingModel(p *Provider) string {
+	if p.BackendCapacity != nil {
+		for _, slot := range p.BackendCapacity.Slots {
+			if (slot.State == "running" || slot.State == "idle") && slot.Model != "" {
+				return slot.Model
+			}
+		}
+		return "" // BackendCapacity present but no warm slot → nothing serving
+	}
 	if p.CurrentModel != "" {
 		return p.CurrentModel
 	}

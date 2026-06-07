@@ -69,6 +69,12 @@ func (s *PostgresStore) SettleProviderFloorDraw(ctx context.Context, draw *Provi
 		return false, errors.New("provider floor draw epoch_id is required")
 	}
 
+	// Earnings row job_id: deterministic per (epoch, provider) so it is idempotent
+	// and matches the floor-draw dedup key. Model "base_reward" makes it visible
+	// in the provider's earnings history/summary while organic-earnings filters
+	// (which exclude base_reward) keep it out of the work-gate and draw math.
+	earningJobID := "floor:" + draw.EpochID + ":" + draw.ProviderKey
+
 	var credited bool
 	err := s.pool.QueryRow(ctx, `
 		WITH draw AS (
@@ -89,6 +95,27 @@ func (s *PostgresStore) SettleProviderFloorDraw(ctx context.Context, draw *Provi
 			INSERT INTO ledger_entries (account_id, entry_type, amount_micro_usd, balance_after, reference, created_at)
 			SELECT d.account_id, $9, d.amount_micro_usd, c.balance_micro_usd, $3, NOW()
 			FROM draw d CROSS JOIN credit c WHERE d.amount_micro_usd > 0
+		), earning AS (
+			INSERT INTO provider_earnings (account_id, provider_id, provider_key, job_id, model,
+				amount_micro_usd, prompt_tokens, completion_tokens, created_at)
+			SELECT d.account_id, '', $1, $10, 'base_reward', d.amount_micro_usd, 0, 0, NOW()
+			FROM draw d WHERE d.amount_micro_usd > 0
+			ON CONFLICT (job_id) WHERE job_id <> '' DO NOTHING
+			RETURNING account_id, provider_key, amount_micro_usd
+		), summary_account AS (
+			INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
+			SELECT account_id, 'account', 1, amount_micro_usd, 0, 0, NOW() FROM earning
+			ON CONFLICT (key, key_type) DO UPDATE SET
+			  total_count = earnings_summary.total_count + 1,
+			  total_micro_usd = earnings_summary.total_micro_usd + EXCLUDED.total_micro_usd,
+			  updated_at = NOW()
+		), summary_provider AS (
+			INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
+			SELECT provider_key, 'provider', 1, amount_micro_usd, 0, 0, NOW() FROM earning WHERE provider_key <> ''
+			ON CONFLICT (key, key_type) DO UPDATE SET
+			  total_count = earnings_summary.total_count + 1,
+			  total_micro_usd = earnings_summary.total_micro_usd + EXCLUDED.total_micro_usd,
+			  updated_at = NOW()
 		)
 		SELECT EXISTS (SELECT 1 FROM draw)`,
 		draw.ProviderKey,        // $1
@@ -100,6 +127,7 @@ func (s *PostgresStore) SettleProviderFloorDraw(ctx context.Context, draw *Provi
 		draw.UptimeFrac,         // $7
 		draw.MemoryGB,           // $8
 		string(LedgerFloorDraw), // $9
+		earningJobID,            // $10
 	).Scan(&credited)
 	if err != nil {
 		return false, fmt.Errorf("store: settle provider floor draw: %w", err)
