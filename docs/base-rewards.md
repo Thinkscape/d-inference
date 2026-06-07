@@ -259,12 +259,27 @@ each is fixed:
   (`coordinator/api/consumer.go`, `coordinator/api/provider.go`). **Fix: count
   only coordinator-dispatched, other-account, billed jobs toward the work gate.**
 
-### Concentration
+### Concentration — per-machine, no per-account cap (default)
 
-Per-account cap on total floor (e.g. ≤ 5% of the pool), bound to the **Stripe
-Connect KYC payout identity** (costly to shard), not the free Privy account.
-Cross-check shared payout destination / egress ASN / synchronized
-connect-disconnect timing in `provider_sessions`.
+Base rewards are paid **per machine, not per account**: an operator running N
+real, attested, serving Macs contributes N machines of capacity and earns N
+floors. We deliberately do **not** cap an account's share by default, because:
+
+- **Attestation is the Sybil defense.** Every machine must be real, attested
+  Apple hardware passing the uptime + work/probe gates — you cannot fake
+  machines, so a large account share reflects real capacity, not Sybils.
+- **The pool already bounds total spend** ($9k), so a per-account cap adds
+  nothing to cost control — it only changes *distribution*, toward penalizing
+  the honest multi-machine operators that are exactly the supply we want.
+- **A per-account cap is itself dodgeable** (split machines across free Privy
+  accounts), so it would punish honest single-account operators while a
+  determined one routes around it — worst of both.
+
+An optional concentration cap remains available as a knob
+(`EIGENINFERENCE_BASE_REWARDS_ACCOUNT_CAP`, default `0` = off; when set it binds
+on the **Stripe Connect KYC payout identity**, not the free Privy account, and is
+enforced cumulatively across re-settlement runs). Turn it on only if a real
+concentration problem appears; the default is per-machine.
 
 ---
 
@@ -364,7 +379,7 @@ table, the in-memory tracker as source-of-truth, the bandwidth-bonus term.
 `k=1` reduction; eligibility gates 1, 3, 4, and the *billed-job* half of gate 5
 (cheap — no new schema); `UNIQUE(job_id)` + idempotent `provider_floor_draw`
 settlement from `provider_sessions`; slot allocation protecting the workhorse
-tier; concentration cap on Stripe identity. Idlers and self-dealers earn nothing
+tier; per-machine payout (per-account cap off by default). Idlers and self-dealers earn nothing
 from day one. Test live-isolated against throwaway Postgres (double-credit,
 blue-green double-open, partial-settlement Σ==pool, empty-fleet no-NaN,
 pre-attestation unpaid).

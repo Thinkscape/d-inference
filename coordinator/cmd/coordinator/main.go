@@ -298,6 +298,7 @@ func main() {
 		brCfg.ReductionK = brc.ReductionK
 		brCfg.PoolBudgetMicroUSD = brc.FloorPoolB
 		brCfg.MinUptimeFrac = brc.MinUptimeFrac
+		brCfg.PerAccountCapFrac = brc.AccountCapFrac
 		srv.SetBaseRewards(baserewards.NewEngine(st, reg, brCfg, logger))
 		logger.Info("base rewards enabled",
 			"reduction_k", brCfg.ReductionK,

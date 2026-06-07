@@ -24,13 +24,20 @@ const defaultGraceSeconds = 90
 // deployment overrides are applied by the caller (server_config → main).
 type Config struct {
 	Enabled              bool
-	ReductionK           float64       // default 1.0 (pure floor)
-	PoolBudgetMicroUSD   int64         // default FloorPoolBudgetMicroUSD ($9k/mo)
-	WorkhorseReserveFrac float64       // default 0.5 — sub-pool reserved for 48–96GB
-	PerAccountCapFrac    float64       // default 0.05; 0 disables the concentration cap
-	MinUptimeFrac        float64       // 0.90 — hard eligibility gate (design §6 gate 3)
-	GraceSeconds         int           // 90 — open-session uptime grace (design §8)
-	WorkWindow           time.Duration // rolling window for the proven-work gate (gate 5)
+	ReductionK           float64 // default 1.0 (pure floor)
+	PoolBudgetMicroUSD   int64   // default FloorPoolBudgetMicroUSD ($9k/mo)
+	WorkhorseReserveFrac float64 // default 0.5 — sub-pool reserved for 48–96GB
+	// PerAccountCapFrac caps any single payout account's share of the pool.
+	// DEFAULT 0 (DISABLED): base rewards are per-MACHINE, not per-account — an
+	// operator running N real, attested, serving Macs contributes N machines of
+	// capacity and should earn N floors. Attestation prevents fake machines and
+	// the pool is already bounded, so a per-account cap only penalizes honest
+	// multi-machine operators (the supply we most want). Left as an optional knob
+	// in case a concentration limit is ever needed.
+	PerAccountCapFrac float64
+	MinUptimeFrac     float64       // 0.90 — hard eligibility gate (design §6 gate 3)
+	GraceSeconds      int           // 90 — open-session uptime grace (design §8)
+	WorkWindow        time.Duration // rolling window for the proven-work gate (gate 5)
 
 	// Phase 2 taper knobs (taper=1 in Phase 0; LaunchDate.IsZero() ⇒ no glide).
 	LaunchDate            time.Time
@@ -40,15 +47,15 @@ type Config struct {
 }
 
 // DefaultConfig returns the recommended launch configuration: k=1 pure floor,
-// $9k pool, half reserved for the workhorse tier, 5% per-account cap, 90% uptime
-// gate. Phase 0 leaves the taper at 1.0.
+// $9k pool, half reserved for the workhorse tier, NO per-account cap (per-machine
+// payout), 90% uptime gate. Phase 0 leaves the taper at 1.0.
 func DefaultConfig() Config {
 	return Config{
 		Enabled:               false,
 		ReductionK:            DefaultReductionK,
 		PoolBudgetMicroUSD:    FloorPoolBudgetMicroUSD,
 		WorkhorseReserveFrac:  0.5,
-		PerAccountCapFrac:     0.05,
+		PerAccountCapFrac:     0, // disabled — per-machine, not per-account (see Config)
 		MinUptimeFrac:         MinUptimeForAvail,
 		GraceSeconds:          defaultGraceSeconds,
 		WorkWindow:            45 * 24 * time.Hour, // rolling ~45d proven-work window
