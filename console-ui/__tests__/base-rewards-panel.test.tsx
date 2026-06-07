@@ -9,12 +9,15 @@ describe("BaseRewardsPanel", () => {
     expect(screen.getByText("$18")).toBeInTheDocument();
   });
 
-  it("anchors the Netflix claim to 64GB+ and marks sub-48GB as usage only", () => {
+  it("anchors the Netflix claim to 64GB+ and marks sub-24GB as usage only", () => {
     render(<BaseRewardsPanel />);
-    // 64GB+ is the qualifying class.
+    // 64GB+ is the Netflix-Standard qualifying class.
     expect(screen.getByText(/64GB\+ Mac/)).toBeInTheDocument();
-    // Sub-48GB earns nothing as a floor.
-    expect(screen.getByText("Under 48GB")).toBeInTheDocument();
+    // 24GB and 32GB now earn a floor (incentivize mid-range Macs).
+    expect(screen.getByText("24GB")).toBeInTheDocument();
+    expect(screen.getByText("32GB")).toBeInTheDocument();
+    // Sub-24GB earns nothing as a floor.
+    expect(screen.getByText("Under 24GB")).toBeInTheDocument();
     expect(screen.getAllByText("Usage only").length).toBeGreaterThan(0);
   });
 
@@ -28,7 +31,9 @@ describe("BaseRewardsPanel", () => {
     const byGB = Object.fromEntries(FLOOR_TIERS.map((t) => [t.minGB, t.floorUSD]));
     expect(byGB[64]).toBe(18);
     expect(byGB[48]).toBe(16);
+    expect(byGB[32]).toBe(12);
+    expect(byGB[24]).toBe(10);
     expect(byGB[512]).toBe(40);
-    expect(byGB[0]).toBe(0); // sub-48GB: usage only
+    expect(byGB[0]).toBe(0); // sub-24GB: usage only
   });
 });

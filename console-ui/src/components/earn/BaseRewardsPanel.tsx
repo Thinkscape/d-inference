@@ -36,7 +36,9 @@ export const FLOOR_TIERS: FloorTier[] = [
   { minGB: 96, label: "96GB", floorUSD: 22, netflix: "standard" },
   { minGB: 64, label: "64GB (workhorse)", floorUSD: 18, netflix: "standard" },
   { minGB: 48, label: "48GB", floorUSD: 16, netflix: "ads" },
-  { minGB: 0, label: "Under 48GB", floorUSD: 0, netflix: "none" },
+  { minGB: 32, label: "32GB", floorUSD: 12, netflix: "ads" },
+  { minGB: 24, label: "24GB", floorUSD: 10, netflix: "ads" },
+  { minGB: 0, label: "Under 24GB", floorUSD: 0, netflix: "none" },
 ];
 
 function netflixLabel(n: FloorTier["netflix"]): string {
@@ -69,11 +71,12 @@ export function BaseRewardsPanel() {
         <h3 className="text-sm font-semibold text-text-primary">Earnings floor</h3>
       </div>
       <p className="text-sm text-text-secondary mb-5">
-        Run a <span className="text-text-primary font-medium">64GB+ Mac</span> and even when the
-        network is quiet, you earn at least a Netflix subscription — best case, more. Smaller Macs
-        earn from real usage. We pay the <span className="text-text-primary font-medium">greater</span>{" "}
-        of your usage earnings or your floor, so the floor shrinks as you earn and vanishes once you
-        out-earn it.
+        A <span className="text-text-primary font-medium">64GB+ Mac</span> clears a full Netflix
+        subscription even when the network is quiet — best case, more.{" "}
+        <span className="text-text-primary font-medium">24GB and up</span> earn a floor too while
+        they&apos;re serving; under 24GB earns from real usage. We pay the{" "}
+        <span className="text-text-primary font-medium">greater</span> of your usage earnings or your
+        floor, so the floor shrinks as you earn and vanishes once you out-earn it.
       </p>
 
       <div className="overflow-hidden rounded-lg border border-border-subtle">

@@ -29,8 +29,12 @@ const (
 
 // floorTiers maps verified unified-memory size (GB) to a monthly floor in
 // micro-USD, highest tier first. A machine is paid the floor of the largest
-// tier whose MinGB it meets; sub-48GB machines get $0 (they cannot hold a model
-// worth keeping warm — design §3). Policy constants, not deployment config.
+// tier whose MinGB it meets; sub-24GB machines get $0 (they can't hold even the
+// 20B baseline model or run useful specialist work — design §3). The 24GB and
+// 32GB tiers exist to incentivize the common mid-range Macs that can serve the
+// gpt-oss-20B baseline plus specialist tasks (STT, embeddings); they still earn
+// only when actually serving (the work gate). Policy constants, not deployment
+// config.
 var floorTiers = []struct {
 	MinGB int
 	Floor int64
@@ -41,11 +45,13 @@ var floorTiers = []struct {
 	{96, 22_000_000},  // $22/mo
 	{64, 18_000_000},  // $18/mo — the "Netflix Standard" anchor
 	{48, 16_000_000},  // $16/mo
+	{32, 12_000_000},  // $12/mo
+	{24, 10_000_000},  // $10/mo — entry tier (20B baseline + specialist work)
 }
 
 // TierFloor returns the µUSD/mo floor for a verified memory size (GB).
-// Sub-48GB → 0. Tiers are inclusive of their MinGB boundary and extend upward
-// until the next tier, so 63GB sits in the 48GB tier and 64GB jumps to the 64GB
+// Sub-24GB → 0. Tiers are inclusive of their MinGB boundary and extend upward
+// until the next tier, so 47GB sits in the 32GB tier and 48GB jumps to the 48GB
 // tier.
 func TierFloor(memGB int) int64 {
 	for _, t := range floorTiers {

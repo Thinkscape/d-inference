@@ -124,7 +124,9 @@ avail_i = clamp( (uptime_fraction_i − 0.90) / 0.10 , 0 , 1 )   // 0 below 90% 
 
 | Machine class | Floor / mo (worst case, full eligibility) | "Pay for your Netflix"? |
 |---|---|---|
-| 16GB Air, 24GB, 32GB | **$0** — usage only | No — can't hold a real chat model |
+| 16GB Air, <24GB | **$0** — usage only | No — too small for the 20B baseline or useful specialist work |
+| 24GB | **$10** | A streaming sub (entry tier) |
+| 32GB | **$12** | A streaming sub |
 | 48GB M4 Pro | **$16** | Netflix **with ads** ($7.99), *not* Standard |
 | **64GB M4 Max** | **$18** | **The anchor — Netflix Standard ($17.99)** ✓ |
 | 96GB | $22 | Yes |
@@ -139,9 +141,13 @@ Notes:
   ticks.
 - **Floor tier is capped at *verified* memory** (§6) — a self-reported spec can
   only cap a machine *downward*, never raise its floor.
-- **Sub-48GB machines get $0 floor by design.** They cannot hold a model worth
-  paying to keep warm. They still earn from real usage, and a separate
-  specialist track (STT / embeddings) can be added later if desired.
+- **24GB and 32GB are incentivized entry tiers.** They can serve the gpt-oss-20B
+  baseline and specialist work (STT, embeddings), and the real fleet skews into
+  this range (~27GB average), so paying them brings in the bulk of useful supply.
+  They earn only while actually serving (the work gate), so the floor never
+  rewards an idle small machine.
+- **Sub-24GB machines get $0 floor by design.** They can't hold the 20B baseline
+  or run useful specialist work; they still earn from real usage.
 
 ### Which signals set the floor — and which are trustworthy
 
@@ -407,5 +413,8 @@ incentive from the fee pool; sunset the cold-start floor per §4b.
    dashboard estimate, or weekly settlement?
 5. **`TARGET_REVENUE` handoff threshold** — set against your demand forecast
    (proposed ≈ 3× pool).
-6. **Specialist track** — add a parallel floor for 16–32GB machines serving real
-   STT/embeddings demand, or leave sub-48GB on usage-only?
+6. **Entry tiers (decided)** — 24GB ($10) and 32GB ($12) now earn a floor to
+   incentivize the common mid-range Macs (they can serve the 20B baseline +
+   specialist STT/embeddings work, and the fleet skews into this range). They
+   earn only while serving (work gate). Open sub-question: extend a floor to
+   16GB for specialist-only work, or keep 24GB as the threshold?

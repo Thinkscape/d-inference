@@ -12,8 +12,11 @@ func TestTierFloor(t *testing.T) {
 	}{
 		{0, 0},
 		{16, 0},
-		{32, 0},
-		{47, 0},
+		{23, 0},
+		{24, 10_000_000},
+		{31, 10_000_000},
+		{32, 12_000_000},
+		{47, 12_000_000},
 		{48, 16_000_000},
 		{63, 16_000_000},
 		{64, 18_000_000},
@@ -70,9 +73,13 @@ func TestScaledFloor(t *testing.T) {
 	if got := ScaledFloor(64, 1.0, 0.5); got != 9_000_000 {
 		t.Errorf("ScaledFloor(64, 1.0, 0.5) = %d, want 9_000_000", got)
 	}
-	// Sub-48GB tier → 0.
-	if got := ScaledFloor(32, 1.0, 1.0); got != 0 {
-		t.Errorf("ScaledFloor(32, 1.0, 1.0) = %d, want 0", got)
+	// 32GB entry tier ($12) at full uptime/taper.
+	if got := ScaledFloor(32, 1.0, 1.0); got != 12_000_000 {
+		t.Errorf("ScaledFloor(32, 1.0, 1.0) = %d, want 12_000_000", got)
+	}
+	// Sub-24GB tier → 0.
+	if got := ScaledFloor(16, 1.0, 1.0); got != 0 {
+		t.Errorf("ScaledFloor(16, 1.0, 1.0) = %d, want 0", got)
 	}
 }
 
